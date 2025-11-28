@@ -1,11 +1,22 @@
+import sqlite3
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Dict, Optional
+import os
+import json
+from dotenv import load_dotenv
+
+# --- AI Library ---
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+load_dotenv()
 
 app = FastAPI()
 
-# --- Config CORS (เพื่อให้ Frontend เรียก API ได้) ---
+# --- Config CORS ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -14,122 +25,229 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Database จำลอง (เก็บใน Ram) ---
-users_db = []
+# --- Database Setup (SQLite) ---
+DB_NAME = "zoologic.db"
 
-# --- Data Models (โครงสร้างข้อมูล) ---
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    # สร้างตาราง users ถ้ายังไม่มี
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            dominant_type TEXT NOT NULL,
+            animal TEXT NOT NULL,
+            score_d INTEGER,
+            score_i INTEGER,
+            score_s INTEGER,
+            score_c INTEGER
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-# 1. โครงสร้างคำตอบแต่ละข้อ
+# รันสร้าง DB ทันทีเมื่อเปิดโปรแกรม
+init_db()
+
+# --- AI Setup ---
+if not os.getenv("GOOGLE_API_KEY"):
+    print("⚠️ Warning: GOOGLE_API_KEY not found")
+
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
+
+# --- Models ---
 class Answer(BaseModel):
     question_id: int
-    value: str  # ค่าต้องเป็น "D", "I", "S", หรือ "C"
+    value: str 
 
-# 2. สิ่งที่ Frontend จะส่งมา (ชื่อ + รายการคำตอบ)
 class UserSubmission(BaseModel):
     name: str
     answers: List[Answer]
 
-# 3. สิ่งที่ Backend จะตอบกลับไป (ผลลัพธ์)
 class UserResult(BaseModel):
     id: int
     name: str
-    dominant_type: str # D, I, S, C
-    animal: str        # กระทิง, อินทรี, หนู, หมี
-    scores: Dict[str, int] # ส่งคะแนนดิบกลับไปให้ดูด้วย (เช่น {"D": 10, "I": 2...})
-    
+    dominant_type: str
+    animal: str
+    scores: Dict[str, int]
+
 class MatchRequest(BaseModel):
     user1_id: int
     user2_id: int
 
-# --- Logic Helper Functions ---
-
+# --- Logic Helper ---
 def calculate_disc_score(answers: List[Answer]):
-    # 1. ตั้งค่าเริ่มต้นคะแนน
     scores = {'D': 0, 'I': 0, 'S': 0, 'C': 0}
-    
-    # 2. วนลูปนับคะแนนจาก Array
     for ans in answers:
-        # แปลงเป็นตัวใหญ่กันเหนียว และเช็คว่าอยู่ใน D,I,S,C ไหม
         val = ans.value.upper()
         if val in scores:
             scores[val] += 1
-            
-    # 3. หา Type ที่คะแนนเยอะที่สุด (Winner)
+    
     max_type = max(scores, key=scores.get)
-    
-    # 4. แปลงเป็นสัตว์
-    animals = {
-        'D': 'กระทิง (Dominance)',
-        'I': 'อินทรี (Influence)',
-        'S': 'หนู (Steadiness)',
-        'C': 'หมี (Compliance)'
-    }
-    
+    animals = {'D': 'กระทิง', 'I': 'อินทรี', 'S': 'หนู', 'C': 'หมี'}
     return max_type, animals[max_type], scores
-
-def get_compatibility_text(type1, type2):
-    # เรียงตัวอักษรเพื่อเช็คคู่ (เช่น CD หรือ DC ให้ค่าเท่ากัน)
-    pair = "".join(sorted([type1, type2])) 
-    
-    compatibility_map = {
-        "DD": "🔥 ไฟแลบ: ต่างคนต่างแรง งานเดินไวมากแต่อาจจะทะเลาะกันบ่อย",
-        "DI": "🚀 พุ่งทะยาน: คนนึงสั่ง คนนึงนำเสนอ เข้าขากันดีในเรื่องความเร็ว",
-        "DS": "✅ สั่ง-ทำ: D สั่ง S ทำ เป็นคู่ที่งานเดินราบรื่นที่สุด",
-        "DC": "⚡ ขั้วตรงข้าม: D เร็ว C ละเอียด อาจหงุดหงิดกัน แต่ผลงานจะสมบูรณ์แบบ",
-        "II": "🎉 ปาร์ตี้: สนุกสนาน ไอเดียกระฉูด แต่อาจจะงานไม่เสร็จตามดีล",
-        "IS": "🤝 เพื่อนรัก: บรรยากาศดีมาก ช่วยเหลือกัน แต่การตัดสินใจอาจช้า",
-        "IC": "🧩 เติมเต็ม: I คิดนอกกรอบ C ตบเข้ากรอบ เป็น Dream Team ด้านความคิดสร้างสรรค์",
-        "SS": "🕊️ สงบสุข: เข้าใจกันดีมาก แต่งานอาจจะเอื่อยๆ ขาดคนกระตุ้น",
-        "SC": "📋 มั่นคง: S คอยซัพพอร์ต C วางระบบ งานจะเรียบร้อยและเป็นระเบียบมาก",
-        "CC": "🔍 ตรวจยับ: ละเอียดขั้นสุด หาข้อผิดพลาดเก่ง แต่อาจจะใช้เวลานานเกินไป",
-    }
-    return compatibility_map.get(pair, "ความสัมพันธ์ปกติ")
 
 # --- API Endpoints ---
 
+# 1. ส่งผลประเมิน (Save to DB)
 @app.post("/submit-assessment", response_model=UserResult)
 def submit_assessment(submission: UserSubmission):
-    # เรียกฟังก์ชันคำนวณ
     dom_type, animal, raw_scores = calculate_disc_score(submission.answers)
     
-    new_user = {
-        "id": len(users_db) + 1,
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO users (name, dominant_type, animal, score_d, score_i, score_s, score_c)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (submission.name, dom_type, animal, raw_scores['D'], raw_scores['I'], raw_scores['S'], raw_scores['C']))
+    
+    new_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    
+    return {
+        "id": new_id,
         "name": submission.name,
         "dominant_type": dom_type,
         "animal": animal,
         "scores": raw_scores
     }
-    
-    users_db.append(new_user)
-    return new_user
 
+# 2. ดูรายชื่อทั้งหมด (Read from DB)
 @app.get("/users", response_model=List[UserResult])
 def get_users():
-    return users_db
-
-@app.post("/match")
-def match_users(req: MatchRequest):
-    # ดึง ID จาก req.user1_id แทน
-    u1 = next((u for u in users_db if u["id"] == req.user1_id), None)
-    u2 = next((u for u in users_db if u["id"] == req.user2_id), None)
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row # เพื่อให้ดึงข้อมูลเป็น dict ได้
+    c = conn.cursor()
+    c.execute("SELECT * FROM users")
+    rows = c.fetchall()
+    conn.close()
     
-    if not u1 or not u2:
+    results = []
+    for row in rows:
+        results.append({
+            "id": row["id"],
+            "name": row["name"],
+            "dominant_type": row["dominant_type"],
+            "animal": row["animal"],
+            "scores": {"D": row["score_d"], "I": row["score_i"], "S": row["score_s"], "C": row["score_c"]}
+        })
+    return results
+
+# 3. ลบคน (Delete)
+@app.delete("/users/{user_id}")
+def delete_user(user_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    deleted = c.rowcount
+    conn.close()
+    
+    if deleted == 0:
         raise HTTPException(status_code=404, detail="User not found")
+    return {"message": "User deleted successfully"}
+
+# 4. จับคู่ 1-on-1 (AI Match)
+@app.post("/match-ai")
+async def match_users_ai(req: MatchRequest):
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE id IN (?, ?)", (req.user1_id, req.user2_id))
+    rows = c.fetchall()
+    conn.close()
+    
+    if len(rows) != 2:
+        raise HTTPException(status_code=404, detail="Users not found")
         
-    result_text = get_compatibility_text(u1['dominant_type'], u2['dominant_type'])
+    u1, u2 = rows[0], rows[1]
+    # สลับให้ถูก id ตาม request (เพราะ sql อาจ return สลับกัน)
+    if u1['id'] != req.user1_id: u1, u2 = u2, u1
+
+    # Prompt จับคู่
+    match_prompt = ChatPromptTemplate.from_template("""
+    Role: You are "ZooLogic AI", a team compatibility expert.
+    Analyze: {name1} ({type1}) vs {name2} ({type2})
+    Scores 1: D={d1}, I={i1}, S={s1}, C={c1}
+    Scores 2: D={d2}, I={i2}, S={s2}, C={c2}
+    
+    Output in Thai (Fun & Insightful):
+    1. Metaphor: Describe them as a duo (e.g. Driver & Navigator).
+    2. Dynamic: How they work together.
+    3. Warning: Potential conflict.
+    4. Advice: 1 tip for each.
+    """)
+    
+    chain = match_prompt | llm | StrOutputParser()
+    analysis = await chain.ainvoke({
+        "name1": u1['name'], "type1": u1['animal'], "d1": u1['score_d'], "i1": u1['score_i'], "s1": u1['score_s'], "c1": u1['score_c'],
+        "name2": u2['name'], "type2": u2['animal'], "d2": u2['score_d'], "i2": u2['score_i'], "s2": u2['score_s'], "c2": u2['score_c']
+    })
     
     return {
-        "user1": {
-            "name": u1['name'],
-            "type": u1['dominant_type'],
-            "animal": u1['animal']
-        },
-        "user2": {
-            "name": u2['name'],
-            "type": u2['dominant_type'],
-            "animal": u2['animal']
-        },
-        "compatibility_result": result_text
+        "user1": u1['name'], "user2": u2['name'],
+        "ai_analysis": analysis
+    }
+
+# 5. วิเคราะห์ภาพรวมทั้งทีม (Team Analysis - ฟีเจอร์ใหม่!)
+@app.get("/analyze-team")
+async def analyze_team_structure():
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM users")
+    users = c.fetchall()
+    conn.close()
+    
+    if not users:
+        return {"analysis": "ยังไม่มีสมาชิกในทีมครับ เพิ่มคนเข้ามาก่อนนะ!"}
+
+    # เตรียม Data ส่งให้ AI
+    team_summary = f"Total Members: {len(users)}\n"
+    type_counts = {"D": 0, "I": 0, "S": 0, "C": 0}
+    
+    members_list = []
+    for u in users:
+        type_counts[u['dominant_type']] += 1
+        members_list.append(f"- {u['name']}: {u['dominant_type']} ({u['animal']})")
+    
+    # Prompt วิเคราะห์ทีมฟุตบอล
+    team_prompt = ChatPromptTemplate.from_template("""
+    Role: You are "ZooLogic Coach", a strategic team manager expert.
+    
+    Context: I am building a project team. Here is my current roster:
+    {team_list}
+    
+    Stats:
+    - Bulls (D - Driver/Forward): {cnt_d}
+    - Eagles (I - Influencer/Midfielder): {cnt_i}
+    - Rats (S - Supporter/Defender): {cnt_s}
+    - Bears (C - Analyst/Tactician): {cnt_c}
+    
+    Task: Analyze this team structure in THAI.
+    1. **Team Formation:** If this were a football team, is it balanced? (e.g., "Too many strikers, no defense" or "Perfect balance").
+    2. **Strengths:** What will this team be good at? (e.g., Fast execution? High creativity?).
+    3. **Weaknesses:** What is missing? What risk should I watch out for?
+    4. **Hiring Advice:** Who should I recruit next to balance the team?
+    
+    Keep it professional but use football metaphors.
+    """)
+    
+    chain = team_prompt | llm | StrOutputParser()
+    analysis = await chain.ainvoke({
+        "team_list": "\n".join(members_list),
+        "cnt_d": type_counts['D'],
+        "cnt_i": type_counts['I'],
+        "cnt_s": type_counts['S'],
+        "cnt_c": type_counts['C']
+    })
+    
+    return {
+        "total_members": len(users),
+        "distribution": type_counts,
+        "ai_analysis": analysis
     }
 
 if __name__ == "__main__":
