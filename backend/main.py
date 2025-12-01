@@ -1,26 +1,24 @@
+import json
 import os
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
 
-# --- FastAPI & Pydantic ---
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
 
-# --- SQLModel ---
 from sqlmodel import SQLModel, Field, Session, create_engine, select
 
-# --- AI Library ---
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 
-# --- Database Setup (SQLModel) ---
 DB_NAME = "zoologic.db"
 sqlite_url = f"sqlite:///{DB_NAME}"
-connect_args = {"check_same_thread": False} # จำเป็นสำหรับ SQLite ใน FastAPI
+connect_args = {"check_same_thread": False}
 engine = create_engine(sqlite_url, echo=False, connect_args=connect_args)
 
 def create_db_and_tables():
@@ -31,8 +29,8 @@ def get_session():
     with Session(engine) as session:
         yield session
 
-# --- SQLModel Tables (Database Schema) ---
 class User(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     dominant_type: str
@@ -42,7 +40,6 @@ class User(SQLModel, table=True):
     score_s: int
     score_c: int
 
-# --- Pydantic Models (For API Input/Output) ---
 class Answer(BaseModel):
     question_id: int
     value: str 
@@ -63,7 +60,12 @@ class MatchRequest(BaseModel):
     user2_id: int
 
 # --- App Setup ---
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_db_and_tables()
+    yield
+    
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -73,18 +75,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.on_event("startup")
-def on_startup():
-    create_db_and_tables()
-
-# --- AI Setup ---
 if not os.getenv("GOOGLE_API_KEY"):
-    print("⚠️ Warning: GOOGLE_API_KEY not found")
+    print("Warning: GOOGLE_API_KEY not found")
 
-# ใช้ 1.5-flash เพื่อความเสถียร (2.5 ยังไม่มาใน public API ทั่วไป ณ ปัจจุบัน)
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.7)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
 
-# --- Logic Helper ---
 def calculate_disc_score(answers: List[Answer]):
     scores = {'D': 0, 'I': 0, 'S': 0, 'C': 0}
     for ans in answers:
@@ -96,15 +91,12 @@ def calculate_disc_score(answers: List[Answer]):
     animals = {'D': 'กระทิง', 'I': 'อินทรี', 'S': 'หนู', 'C': 'หมี'}
     return max_type, animals[max_type], scores
 
-# --- API Endpoints ---
-
 # 1. ส่งผลประเมิน (Create)
 @app.post("/submit-assessment", response_model=UserResult)
 def submit_assessment(submission: UserSubmission, session: Session = Depends(get_session)):
-    # คำนวณคะแนน
+
     dom_type, animal, raw_scores = calculate_disc_score(submission.answers)
     
-    # สร้าง Object User เพื่อเตรียมบันทึก
     user_db = User(
         name=submission.name,
         dominant_type=dom_type,
@@ -128,12 +120,10 @@ def submit_assessment(submission: UserSubmission, session: Session = Depends(get
         "scores": raw_scores
     }
 
-# 2. ดูรายชื่อทั้งหมด (Read All)
 @app.get("/users", response_model=List[UserResult])
 def get_users(session: Session = Depends(get_session)):
     users = session.exec(select(User)).all()
     
-    # แปลงข้อมูลกลับเป็น Format ที่ Frontend ต้องการ
     results = []
     for u in users:
         results.append({
@@ -145,7 +135,6 @@ def get_users(session: Session = Depends(get_session)):
         })
     return results
 
-# 3. ลบคน (Delete)
 @app.delete("/users/{user_id}")
 def delete_user(user_id: int, session: Session = Depends(get_session)):
     user = session.get(User, user_id)
@@ -156,7 +145,6 @@ def delete_user(user_id: int, session: Session = Depends(get_session)):
     session.commit()
     return {"message": "User deleted successfully"}
 
-# 4. จับคู่ 1-on-1 (AI Match)
 @app.post("/match-ai")
 async def match_users_ai(req: MatchRequest, session: Session = Depends(get_session)):
     # ดึง User 2 คนด้วย SQLModel
@@ -208,28 +196,32 @@ async def analyze_team_structure(session: Session = Depends(get_session)):
         members_list.append(f"- {u.name}: {u.dominant_type} ({u.animal})")
     
     team_prompt = ChatPromptTemplate.from_template("""
-    Role: You are "ZooLogic Coach", a strategic team manager expert.
+    Role: You are an expert "HR & Organizational Consultant". You analyze team dynamics using DISC theory in a professional business context.
     
-    Context: I am building a project team. Here is my current roster:
+    Context: I am building a project team. Here is the current roster:
     {team_list}
     
     Stats:
-    - Bulls (D - Driver/Forward): {cnt_d}
-    - Eagles (I - Influencer/Midfielder): {cnt_i}
-    - Rats (S - Supporter/Defender): {cnt_s}
-    - Bears (C - Analyst/Tactician): {cnt_c}
+    - High D (Driver/Commander): {cnt_d} -> Focus on Results, Speed, Action.
+    - High I (Influencer/Promoter): {cnt_i} -> Focus on Ideas, Communication, Morale.
+    - High S (Supporter/Stabilizer): {cnt_s} -> Focus on Support, Harmony, Consistency.
+    - High C (Analyst/Compliance): {cnt_c} -> Focus on Accuracy, Logic, Process.
     
-    Task: Analyze this team structure in THAI.
-    1. **Team Formation:** If this were a football team, is it balanced? 
-    2. **Strengths:** What will this team be good at?
-    3. **Weaknesses:** What is missing? What risk should I watch out for?
-    4. **Hiring Advice:** Who should I recruit next to balance the team?
+    Task: Analyze this team structure in THAI language (Professional & Insightful).
     
-    Keep it professional but use football metaphors.
+    IMPORTANT: Return the result ONLY as a valid JSON object with the following keys:
+    1. "title": A professional summary title (e.g. "High-Speed Execution Team", "Creative Innovation Hub").
+    2. "formation": Analyze the "Work Distribution". Who leads? Who supports? Is it top-heavy? (Mention specific names).
+    3. "key_players": Highlight 1-2 key members who hold the team together.
+    4. "game_plan": "Team Work Style". How will they likely work? (e.g. Agile, Waterfall, Chaos, Fast-paced).
+    5. "weakness": "Operational Risks". What problems will likely happen? (e.g. Burnout, Missed deadlines, Conflict).
+    6. "transfer_market": "Recruitment Needs". Which role/personality is missing to balance the workflow?
+    
+    Do not add Markdown formatting (like ** or ###) inside the JSON values. Keep it clean text.
     """)
     
     chain = team_prompt | llm | StrOutputParser()
-    analysis = await chain.ainvoke({
+    raw_analysis = await chain.ainvoke({
         "team_list": "\n".join(members_list),
         "cnt_d": type_counts['D'],
         "cnt_i": type_counts['I'],
@@ -237,12 +229,21 @@ async def analyze_team_structure(session: Session = Depends(get_session)):
         "cnt_c": type_counts['C']
     })
     
+    try:
+        cleaned_json = raw_analysis.replace("```json", "").replace("```", "").strip()
+        analysis_json = json.loads(cleaned_json)
+    except Exception as e:
+        analysis_json = {
+            "error": "AI response format error",
+            "raw_text": raw_analysis
+        }
+    
     return {
         "total_members": len(users),
         "distribution": type_counts,
-        "ai_analysis": analysis
+        "ai_analysis": analysis_json
     }
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
