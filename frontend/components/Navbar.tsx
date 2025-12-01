@@ -10,18 +10,10 @@ export default function Navbar() {
           className="text-xl font-bold flex items-center gap-2 text-green-400 hover:text-green-300 transition"
         >
           <Users size={28} />
-          <span>ZooLogic</span>
+          <span>4Elements</span>
         </Link>
 
         <div className="flex gap-6">
-          <Link
-            href="/"
-            className="flex items-center gap-1 hover:text-green-400 transition"
-          >
-            <Users size={18} />
-            <span>ทีมของฉัน</span>
-          </Link>
-
           <Link
             href="/assessment"
             className="flex items-center gap-1 hover:text-green-400 transition"

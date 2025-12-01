@@ -42,7 +42,8 @@ class User(SQLModel, table=True):
 
 class Answer(BaseModel):
     question_id: int
-    value: str 
+    most_value: str
+    least_value: str     
 
 class UserSubmission(BaseModel):
     name: str
@@ -81,17 +82,32 @@ if not os.getenv("GOOGLE_API_KEY"):
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
 
 def calculate_disc_score(answers: List[Answer]):
+    # 1. ตั้งต้นที่ 0 (หรือจะตั้งที่ 12 เพื่อกันติดลบก็ได้)
     scores = {'D': 0, 'I': 0, 'S': 0, 'C': 0}
-    for ans in answers:
-        val = ans.value.upper()
-        if val in scores:
-            scores[val] += 1
     
+    raw_most = {'D': 0, 'I': 0, 'S': 0, 'C': 0}
+    raw_least = {'D': 0, 'I': 0, 'S': 0, 'C': 0}
+
+    for ans in answers:
+    
+        m = ans.most_value.upper()
+        if m in scores:
+            scores[m] += 1
+            raw_most[m] += 1
+            
+        l = ans.least_value.upper()
+        if l in scores:
+            scores[l] -= 1 
+            raw_least[l] += 1
+
+    for key in scores:
+        scores[key] += 12 
+        
     max_type = max(scores, key=scores.get)
     animals = {'D': 'กระทิง', 'I': 'อินทรี', 'S': 'หนู', 'C': 'หมี'}
+    
     return max_type, animals[max_type], scores
 
-# 1. ส่งผลประเมิน (Create)
 @app.post("/submit-assessment", response_model=UserResult)
 def submit_assessment(submission: UserSubmission, session: Session = Depends(get_session)):
 
@@ -107,7 +123,6 @@ def submit_assessment(submission: UserSubmission, session: Session = Depends(get
         score_c=raw_scores['C']
     )
     
-    # บันทึกลง DB
     session.add(user_db)
     session.commit()
     session.refresh(user_db) # รีเฟรชเพื่อเอา ID ที่เพิ่งสร้างกลับมา
@@ -177,6 +192,71 @@ async def match_users_ai(req: MatchRequest, session: Session = Depends(get_sessi
     return {
         "user1": u1.name, "user2": u2.name,
         "ai_analysis": analysis
+    }
+    
+@app.get("/users/{user_id}/analysis")
+async def analyze_user(user_id: int, session: Session = Depends(get_session)):
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    analysis_prompt = ChatPromptTemplate.from_template("""
+    Role: You are an expert personality analyst using the "4 Animals" (DISC) psychology framework.
+    
+    User Profile:
+    Name: {name}
+    Scores: Bull(D)={d}, Eagle(I)={i}, Rat(S)={s}, Bear(C)={c}
+    Dominant Type: {dom} ({animal})
+
+    Task: Analyze this person in THAI language.
+    
+    **CRITICAL OUTPUT RULES:**
+    1. **PLAIN TEXT ONLY:** No HTML tags.
+    2. **NO MARKDOWN:** No bold (**), no headers (##).
+    3. **Lists:** Use a simple hyphen "-" for lists. Do NOT use "•" or numbers.
+    4. **No Repetition:** In 'compatible_with', DO NOT repeat the animal name twice (e.g., don't say "Rat and Bear Rat:"). Just name the animal once and explain why.
+    5. **Concise:** Keep sentences clear and direct.
+    
+    Return JSON ONLY with these keys:
+    1. "title": A catchy archetype title (e.g. "กระทิงยอดนักกลยุทธ์").
+    2. "element_desc": Describe their personality mix clearly.
+    3. "personality": Key strengths. Use "-" for bullet points.
+    4. "weakness": Potential blind spots. Use "-" for bullet points.
+    5. "work_style": How they behave in a work setting.
+    6. "compatible_with": Which Animal type is their best partner? (Format: "Animal Name: Reason")
+    
+    Do not add Markdown code blocks. Just raw JSON.
+    """)
+
+    chain = analysis_prompt | llm | StrOutputParser()
+    
+    # ส่งคะแนนไปให้ AI
+    raw_result = await chain.ainvoke({
+        "name": user.name,
+        "d": user.score_d, "i": user.score_i, "s": user.score_s, "c": user.score_c,
+        "dom": user.dominant_type, "animal": user.animal
+    })
+
+    try:
+        cleaned_json = raw_result.replace("```json", "").replace("```", "").strip()
+        analysis_json = json.loads(cleaned_json)
+    except:
+        analysis_json = {"error": "AI Error", "raw": raw_result}
+
+    return {
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "dominant_type": user.dominant_type,
+            "animal": user.animal,
+            "scores": {
+                "D": user.score_d,
+                "I": user.score_i,
+                "S": user.score_s,
+                "C": user.score_c
+            }
+        },
+        "analysis": analysis_json
     }
 
 # 5. วิเคราะห์ภาพรวมทั้งทีม (Team Analysis)
