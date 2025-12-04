@@ -1,6 +1,6 @@
-# Kemii
+# Kemii (Chemistry)
 
-Kemii is an AI-powered team management and personality assessment platform designed to optimize team dynamics using the DISC behavioral model. It leverages Google Gemini AI to analyze individual traits, assess compatibility between team members, and automatically generate balanced team structures.
+Kemii is an AI-powered team management and personality assessment platform designed to optimize team dynamics using the DISC behavioral model. It leverages Google Gemini AI to analyze individual traits, assess compatibility between team members, and automatically generate balanced team structures. 
 
 ## Features
 
