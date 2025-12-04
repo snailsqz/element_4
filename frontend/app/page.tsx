@@ -31,7 +31,7 @@ export default function Home() {
     const storedAnimal = localStorage.getItem("myAnimal");
     const storedName = localStorage.getItem("myName");
 
-    if (storedId) {
+    if (storedId && storedId !== "undefined" && storedId !== "null") {
       setMyId(Number(storedId));
       setMyAnimal(storedAnimal);
       setMyName(storedName);
@@ -39,6 +39,9 @@ export default function Home() {
       setMyId(null);
       setMyAnimal(null);
       setMyName(null);
+      if (storedId === "undefined") {
+        localStorage.removeItem("myUserId");
+      }
     }
   };
 

@@ -4,6 +4,7 @@ import axios from "axios";
 import { useRouter } from "next/navigation";
 import { Check, X, Info, Play } from "lucide-react";
 import toast from "react-hot-toast";
+import ElementalLoader from "@/components/ElementalLoader";
 
 const questions = [
   {
@@ -241,6 +242,14 @@ export default function AssessmentPage() {
       setIsSubmitting(false);
     }
   };
+
+  if (isSubmitting) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
+        <ElementalLoader />
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-2xl mx-auto py-10 px-4">

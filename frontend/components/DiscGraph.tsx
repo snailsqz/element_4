@@ -10,14 +10,23 @@ import {
   Cell,
 } from "recharts";
 
+import { useState, useEffect } from "react";
+
 interface DiscGraphProps {
   scores: { D: number; I: number; S: number; C: number };
 }
 
 export default function DiscGraph({ scores }: DiscGraphProps) {
-  // 1. คำนวณพิกัด X, Y
-  // สมมติคะแนนเต็มด้านละ 24 (จากสูตร +12)
-  // X: ขวา (D+I) - ซ้าย (S+C)
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsMounted(true);
+    }, 0); // 0ms ก็เพียงพอให้หลุดจาก Render loop แล้วครับ
+
+    return () => clearTimeout(timer); // Cleanup (กันเหนียว)
+  }, []);
+
   const x = scores.D + scores.I - (scores.S + scores.C);
 
   // Y: บน (D+S) - ล่าง (I+C) *สูตรนี้อิงตามรูปที่คุณส่งมา
@@ -27,6 +36,14 @@ export default function DiscGraph({ scores }: DiscGraphProps) {
 
   // กำหนดขอบเขตสูงสุดของกราฟ (เพื่อให้จุดอยู่ตรงกลางสวยๆ)
   const maxRange = 25;
+
+  if (!isMounted) {
+    return (
+      <div className="w-full h-[400px] bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-center text-slate-400">
+        Loading Graph...
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-full h-[400px] bg-white rounded-xl shadow-inner border border-slate-200 overflow-hidden font-sans">
@@ -67,7 +84,6 @@ export default function DiscGraph({ scores }: DiscGraphProps) {
           </p>
         </div>
       </div>
-
       {/* --- LAYER 2: ป้ายแกน (Axis Labels) --- */}
       <div className="absolute inset-0 pointer-events-none">
         {/* แกนตั้ง */}
@@ -86,49 +102,51 @@ export default function DiscGraph({ scores }: DiscGraphProps) {
           Extrovert
         </div>
       </div>
-
-      <div className="absolute inset-0">
-        <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-            <XAxis
-              type="number"
-              dataKey="x"
-              hide
-              domain={[-maxRange, maxRange]}
-            />
-            <YAxis
-              type="number"
-              dataKey="y"
-              hide
-              domain={[-maxRange, maxRange]}
-            />
-            <Tooltip cursor={{ strokeDasharray: "3 3" }} content={() => null} />{" "}
-            <ReferenceLine x={0} stroke="#94a3b8" strokeDasharray="3 3" />
-            <ReferenceLine y={0} stroke="#94a3b8" strokeDasharray="3 3" />
-            <Scatter name="You" data={data} fill="#0f172a" opacity={0}>
-              {data.map((entry, index) => (
-                <Cell key={`cell-${index}`} />
-              ))}
-            </Scatter>
-          </ScatterChart>
-        </ResponsiveContainer>
-      </div>
-
+      <ResponsiveContainer
+        width="100%"
+        height="100%"
+        minWidth={300}
+        minHeight={300}
+        className="relative z-10"
+      >
+        <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+          <XAxis
+            type="number"
+            dataKey="x"
+            hide
+            domain={[-maxRange, maxRange]}
+          />
+          <YAxis
+            type="number"
+            dataKey="y"
+            hide
+            domain={[-maxRange, maxRange]}
+          />
+          <Tooltip cursor={{ strokeDasharray: "3 3" }} content={() => null} />{" "}
+          <ReferenceLine x={0} stroke="#94a3b8" strokeDasharray="3 3" />
+          <ReferenceLine y={0} stroke="#94a3b8" strokeDasharray="3 3" />
+          <Scatter name="You" data={data} fill="#0f172a" opacity={0}>
+            {data.map((entry, index) => (
+              <Cell key={`cell-${index}`} />
+            ))}
+          </Scatter>
+        </ScatterChart>
+      </ResponsiveContainer>
       <div
-        className="absolute z-10 animate-bounce"
+        className="absolute z-10 flex flex-col items-center justify-center"
         style={{
-          // คำนวณตำแหน่ง % บนหน้าจอ (Shift จากศูนย์กลาง 50%)
+          // คำนวณตำแหน่ง
           left: `${50 + (x / maxRange) * 50}%`,
           top: `${50 - (y / maxRange) * 50}%`,
-          // ใช้ translate เพื่อให้จุดกึ่งกลางของ div อยู่ตรงพิกัดพอดี
+          // จัดกึ่งกลางจุดให้ตรงเป๊ะ
           transform: "translate(-50%, -50%)",
         }}
       >
-        <div className="w-6 h-6 rounded-full shadow-xl border-4 border-white/70 bg-slate-900/70 animate-pulse"></div>
+        {/* 1. วงแหวนเรดาร์ (Ping): ขยายออกแล้วจางหายไป (ดึงสายตาแต่ไม่รก) */}
+        <div className="absolute w-8 h-8 bg-slate-400 rounded-full animate-ping opacity-75"></div>
 
-        <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-900/80 text-white text-xs px-2 py-1 rounded whitespace-nowrap shadow-sm animate-pulse">
-          คุณอยู่นี่!
-        </div>
+        {/* 2. จุดหลัก (Core): อยู่นิ่งๆ สีเข้มชัดเจน */}
+        <div className="relative w-4 h-4 bg-slate-900 border-2 border-white rounded-full shadow-md"></div>
       </div>
     </div>
   );
