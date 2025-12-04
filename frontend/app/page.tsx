@@ -151,15 +151,8 @@ export default function Home() {
           <div className="shrink-0">
             {myId ? (
               (() => {
-                // 1. ดึงค่าจาก LocalStorage มารอไว้
-                const animal =
-                  typeof window !== "undefined"
-                    ? localStorage.getItem("myAnimal")
-                    : "";
-                const name =
-                  typeof window !== "undefined"
-                    ? localStorage.getItem("myName")
-                    : "";
+                const animal = typeof window !== "undefined" ? myAnimal : "";
+                const name = typeof window !== "undefined" ? myName : "";
 
                 // 2. กำหนดธีมสีและชื่อใหม่ตามสัตว์
                 let theme = {
@@ -175,7 +168,7 @@ export default function Home() {
                     bg: "bg-red-50",
                     border: "border-red-200",
                     text: "text-red-800",
-                    icon: "🔥",
+                    icon: "🐂",
                     label: "Dominance (ผู้นำ)",
                   };
                 } else if (animal?.includes("อินทรี")) {

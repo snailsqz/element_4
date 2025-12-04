@@ -373,9 +373,7 @@ export default function AssessmentPage() {
 
       {/* ส่วนกรอกชื่อ */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-6 text-slate-900">
-        <label className="block font-semibold mb-2">
-          ชื่อของคุณ (หรือชื่อเล่น)
-        </label>
+        <label className="block font-semibold mb-2">ชื่อเล่นของคุณ</label>
         <input
           type="text"
           className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-900"

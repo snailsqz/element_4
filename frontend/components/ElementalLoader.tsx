@@ -68,7 +68,7 @@ export default function ElementalLoader() {
           กำลังหลอมรวมธาตุ...
         </h3>
         <p className="text-slate-500 text-sm font-mono">
-          กำลังคำนวณความสมดุลของทีม {Math.floor(progress)}%
+          กำลังคำนวณความสมดุล {Math.floor(progress)}%
         </p>
 
         {/* (แถม) หลอด Loading เล็กๆ */}
