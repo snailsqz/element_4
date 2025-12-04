@@ -65,11 +65,8 @@ Kemii is an AI-powered team management and personality assessment platform desig
 2. Install dependencies:
    ```bash
    npm install
-3. Create a .env.local file in the frontend directory:
-   ```bash
-   NEXT_PUBLIC_API_URL=http://localhost:8000
   
-4. Run the development server:
+3. Run the development server:
    ```bash
    npm run dev
   The application will be available at http://localhost:3000.
